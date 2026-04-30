@@ -1,0 +1,42 @@
+||===========================================================||
+|| My STM32 NUCLEO-G071RB (ARM Cortex-M0+) Learning progress ||
+||===========================================================||
+
+--------------------------------------------------------------------------------
+
+REQUIREMENTS
+============
+
+* arm-none-eabi-gcc (Compiler)
+* make (Build System)
+* openOCD
+* GDB (for ARM processors, I used `gdb-multiarch`)
+
+--------------------------------------------------------------------------------
+
+BUILDING AND UPLOADING
+======================
+
+To Build, go into one of the folders and run
+```
+make
+```
+
+To build as well as flash(upload) the program after that, then run
+```
+make flash
+```
+
+--------------------------------------------------------------------------------
+
+ORGANIZATION
+============
+
+Organization of the folders are in such a way that each folder is self-complete,
+and no need for extra things other than the requirements mentioned above. List
+of the folders with their brief description:
+
+01. Made a LED Blink, enable clock for GPIOA, then set the MODE of Pin5 of GPIOA
+    to output-mode, and then setting and clearing the corresponding bit in the
+    OUTPUT Register of GPIOA after some delay.
+

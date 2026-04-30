@@ -1,0 +1,88 @@
+PSEUDOCODE
+==========
+
+Enable clock for GPIOA
+Configure PA5 as output (push-pull, no pull-up/down, low speed)
+Loop forever:
+    Set PA5 HIGH
+    Wait ~500ms
+    Set PA5 LOW
+    Wait ~500ms
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA5  =>  Onboard LED (LD2) - Active HIGH
+
+--------------------------------------------------------------------------------
+
+KEY REGISTERS
+=============
+
+RCC (Reset and Clock Control)
+|-------------|----------------|----------------------------------------------------------------------------------------------|
+| Register    | Field          | Description                                                                                  |
+|-------------|----------------|----------------------------------------------------------------------------------------------|
+| RCC->IOPENR | IOPAEN (bit 0) | Enables the clock for GPIOA. Without this, any write to GPIOA registers is silently ignored. |
+|-------------|----------------|----------------------------------------------------------------------------------------------|
+
+GPIOA (General-Purpose Input/Output Port A)
+|----------------|-----------------------------|-----------------------------------------------------------------------------------------------|
+| Register       | Field                       | Description                                                                                   |
+|----------------|-----------------------------|-----------------------------------------------------------------------------------------------|
+| GPIOA->MODER   | bits[11:10] for PA5         | Sets pin mode. 01 = General purpose output. Reset value is 11 (analog) for most pins.         |
+| GPIOA->OTYPER  | bit 5                       | Output type. 0 = Push-pull, 1 = Open-drain. We use push-pull.                                 |
+| GPIOA->OSPEEDR | bits[11:10] for PA5         | Output speed. 00 = Low speed. Fine for LED.                                                   |
+| GPIOA->PUPDR   | bits[11:10] for PA5         | Pull-up/Pull-down. 00 = None. Output pins don't need it.                                      |
+| GPIOA->BSSR    | bit 5 (SET), bit 21 (RESET) | Atomic set/reset of pin. Write 1 to bit 5 to set PA5 HIGH. Write 1 to bit 21 to pull PA5 LOW. |
+| GPIOA->ODR     | bit 5                       | Direct output data register. Can also be used to drive the pin, but not atomic.               |
+|----------------|-----------------------------|-----------------------------------------------------------------------------------------------|
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* Forgetting RCC->IOPENR - The most common first mistake. GPIO registers exist
+  in memory but writes do nothing until the peripheral clock is enabled. If our
+  LED never turns on, this is the first thing to check.
+
+* Not clearing MODER bits before setting, MODER reset value for PA5 is 10
+  (analog mode on most pins). If we only |= without first clearing with 
+  &= ~(3U << 10), we may land in an unintended mode.
+
+* Using ODR instead of BSRR, ODR is not atomic. In a simple blink it doesn't
+  matter, but in ISR-driven code doing ODR ^= (1 << 5) is a read-modify-write
+  and can be corrupted. Build the BSRR habit now.
+
+* Software delay is not accurate - The delay() here is purely a loop
+  counter. Compiler optimizations can shrink or eliminate it. Use volatile on
+  the counter (done above) and don't expect real milliseconds from this. That's
+  what SysTick is for.
+
+--------------------------------------------------------------------------------
+
+Extra Notes
+===========
+
+* Why IOPORT_BASE is separate from PERIPH_BASE, On STM32G0, GPIO peripherals sit
+  on the IOPORT bus (0x50000000) rather than the standard APB/AHB bus
+  (0x40000000). This is a G0-specific thing. On STM32F4 for example, all GPIOs
+  are on AHB1. Keep this in mind when reading reference manuals for other
+  families.
+
+* BSRR (Bit Set Reset Register) breakdown, the upper 16 bits (BR, bits [31:16])
+  reset a pin and the lower 16 bits (BS, bits [15:0]) set a pin. Writing both in
+  the same write is atomic. If we write BSRR = (1 << 5) | (1 << 21), the reset
+  side wins. Useful to know.
+
+* volatile on register structs, Every field in the struct is marked
+  volatile. This tells the compiler: do not cache this, do not reorder this,
+  always read/write from actual memory. Without it, the compiler may optimize
+  the register writes away entirely.
+
+* This program is the skeleton for everything that follows: The RCC enable +
+  MODER config pattern repeats for every peripheral tied to a GPIO pin.
+

@@ -85,4 +85,3 @@ EXTRA NOTES
 
 * This program is the skeleton for everything that follows: The RCC enable +
   MODER config pattern repeats for every peripheral tied to a GPIO pin.
-

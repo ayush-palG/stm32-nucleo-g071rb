@@ -25,3 +25,4 @@ flash: $(BUILD_DIR)$(TARGET).elf
 
 clean:
 	rm -rf $(BUILD_DIR)
+

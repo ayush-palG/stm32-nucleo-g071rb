@@ -52,3 +52,4 @@ void Reset_Handler(void)
     // In case we got out of main function, should never reach here, trap if it does
     while (1);
 }
+

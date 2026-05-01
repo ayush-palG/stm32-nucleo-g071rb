@@ -1,0 +1,126 @@
+PSEUDOCODE
+==========
+
+Enable clock for TIM2
+Configure TIM2:
+    Set Prescaler (PSC) -> scale down 16MHz to 1MHz (1 tick = 1µs)
+    Set Auto-Reload Register (ARR) -> count up to desired delay
+    Set counting mode -> upcounting
+    Enable TIM2
+
+delay_us(n):
+    Reset counter to 0
+    Set ARR to n
+    Clear update event flag (UIF)
+    Start timer
+    Wait until UIF flag is set (counter hit ARR)
+    Stop timer
+
+delay_ms(n):
+    Call delay_us(n * 1000)
+
+Main:
+    Setup PA5 as output (LED)
+    Loop forever:
+        Toggle LED
+        delay_ms(500)
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA5   =>  Onboard LED (LD4) - Active HIGH
+
+--------------------------------------------------------------------------------
+
+KEY REGISTERS
+=============
+
+RCC (Reset and Clock Control)
+|--------------|----------------|----------------------------------------------------------------|
+| Register     | Field          | Description                                                    |
+|--------------|----------------|----------------------------------------------------------------|
+| RCC->APBENR1 | TIM2EN (bit 0) | Enables clock for TIM2. TIM2 sits on APB1 bus, not IOPORT bus. |
+|--------------|----------------|----------------------------------------------------------------|
+
+TIM2 (General-Purpose Timer)
+|-----------|------------|--------------------------------------------------------------------------------------------------------------------------|
+| Register  | Field      | Description                                                                                                              |
+|-----------|------------|--------------------------------------------------------------------------------------------------------------------------|
+| TIM2->PSC | bits[15:0] | Prescaler. Timer input clock is divided by (PSC + 1). At 16MHz, PSC=15 gives 1MHz tick.                                  |
+| TIM2->ARR | bits[31:0] | Auto-Reload Register. Counter counts up to this value, then triggers update event and resets. TIM2 is 32-bit on STM32G0. |
+| TIM2->CNT | bits[31:0] | Current counter value. Write 0 to reset it before starting a timed delay.                                                |
+| TIM2->CR1 | bit0 CEN   | Counter Enable. Set to start, clear to stop the timer.                                                                   |
+| TIM2->CR1 | bit3 OPM   | One Pulse Mode. Counter stops automatically after one update event. Perfect for delays.                                  |
+| TIM2->EGR | bit0 UG    | Update Generation. Writing 1 forces an update event - reloads PSC and ARR immediately into shadow registers.             |
+| TIM2->SR  | bit0 UIF   | Update Interrupt Flag. Set by hardware when counter reaches ARR. Must be cleared manually.                               |
+|-----------|------------|--------------------------------------------------------------------------------------------------------------------------|
+
+--------------------------------------------------------------------------------
+
+KEY CONCEPTS
+============
+
+Shadow Register in STM32 TIM Peripheral
+
+Shadow registers are a double-buffering mechanism used in STM32 timers to ensure
+safe, glitch-free updates to timer configuration during operation. When a timer
+is running, we might want to change its period, duty cycle, or compare value. If
+we write directly to the active register while the timer is counting, we risk:
+Inconsistent behavior, Glitches, Timing errors. The value in shadow registers is
+transferred to the active registers only on an Update Event (UEV) - typically
+when the timer overflows or resets. There are specific bits which enables and
+disables the use of shadow registers, but PSC Register always has shadow
+registers (always buffered).
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* PSC off-by-one,1 Just like SysTick's LOAD, the prescaler divides by PSC + 1,
+  not PSC. For a 1MHz tick from 16MHz: PSC = 15, not 16. If the delays are
+  consistently ~6% too long, this is why.
+
+* PSC not loading without EGR|=UG, PSC and ARR have shadow registers. The value
+  we write doesn't take effect until the next update event. If we skip EGR |=
+  (1U << 0) during init, the first delay will use whatever garbage was in the
+  shadow register at reset. Always force an update event after setting PSC.
+
+* Not clearing UIF before starting, If a previous delay left UIF set and we
+  don't clear it, the while(!(SR & UIF)) exits immediately on the next call,
+  giving us a near-zero delay. Clear UIF before enabling the counter, not after.
+
+* delay_ms via loop vs single large ARR, we might be tempted to set ARR = ms *
+  1000 directly for millisecond delays. This works for small values but remember
+  ARR is loaded into a 32-bit register, the math is fine. However, at 1µs
+  resolution, delay_ms(1000) would set ARR = 1,000,000 which is valid. The loop
+  approach here keeps delay_micro_sec reusable and clean.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* TIM2 is 32-bit on STM32G0, Unlike many STM32 families where TIM2 is 16-bit, on
+  the G0 series TIM2 has a full 32-bit counter and ARR. This means we can count
+  up to 0xFFFFFFFF ticks, at 1MHz that's over an hour in a single reload. No
+  chaining needed for long delays.
+
+* Shadow registers are a feature, not a bug, PSC and ARR are buffered. Writes to
+  them only apply on the next update event. This is intentional, it prevents
+  glitches mid-period if we change the reload value while the counter is
+  running. In PWM programs , we'll update ARR on the fly and this buffering
+  becomes essential.
+
+* OPM vs manual stop, One Pulse Mode (CR1 bit 3) automatically clears CEN when
+  the counter reaches ARR. This is cleaner than manually clearing it, but we
+  still clear it explicitly for safety. In continuous mode (no OPM), the counter
+  wraps and keeps going, which is exactly what PWM Program needs.
+
+* TIM2 vs SysTick for delays, SysTick gives us a free-running 1ms timebase with
+  an ISR, great for non-blocking timing patterns. TIM2 used here is a blocking
+  one-shot delay with microsecond precision, great when we need tight µs-level
+  timing. Both have their place. From now onwards, SysTick handles coarse timing
+  and TIM2 is freed up for PWM and input capture.

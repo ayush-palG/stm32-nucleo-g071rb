@@ -45,3 +45,6 @@ of the folders with their brief description:
 
 03. SYSTICK TIMER DELAY: Replace the crude loop delay with SysTick-based
     millisecond delay.
+
+04. GENERAL PURPOSE TIMER DELAY: Used TIM2 in basic upcounting mode to generate
+    accurate time delays. Understand PSC and ARR registers. 

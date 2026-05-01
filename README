@@ -36,7 +36,9 @@ Organization of the folders are in such a way that each folder is self-complete,
 and no need for extra things other than the requirements mentioned above. List
 of the folders with their brief description:
 
-01. Made a LED Blink, enable clock for GPIOA, then set the MODE of Pin5 of GPIOA
-    to output-mode, and then setting and clearing the corresponding bit in the
-    OUTPUT Register of GPIOA after some delay.
+01. LED BLINK: Made a LED Blink, enable clock for GPIOA, then set the MODE of
+    Pin5 of GPIOA to output-mode, and then setting and clearing the
+    corresponding bit in the OUTPUT Register of GPIOA after some delay.
 
+02. PUSH BUTTON POLLING: GPIO Input, Read the user button, debounce in software,
+    toggle LED on press. Understand pull-up/down config.

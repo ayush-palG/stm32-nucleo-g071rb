@@ -1,0 +1,84 @@
+PSEUDOCODE
+==========
+
+Enable clock for GPIOA and GPIOC
+Configure PA5  as output (push-pull) - LED
+Configure PC13 as input with pull-up - Button
+Loop forever:
+    If PC13 reads LOW (button pressed):
+        Wait ~10ms (debounce)
+        If PC13 still LOW:
+            Toggle LED
+            Wait until button is released
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA5   =>  Onboard LED (LD4) - Active HIGH
+PC13  =>  Onboard User Button - Active LOW (pressed = 0)
+
+--------------------------------------------------------------------------------
+
+KEY REGISTERS
+=============
+
+RCC (Reset and Clock Control)
+|-------------|----------------|--------------------------|
+| Register    | Field          | Description              |
+|-------------|----------------|--------------------------|
+| RCC->IOPENR | IOPCEN (bit 2) | Enables clock for GPIOC. |
+|-------------|----------------|--------------------------|
+
+GPIOC (General-Purpose Input/Output Port C)
+|--------------|----------------------|------------------------------------------------------------------------------------------|
+| Register     | Field                | Description                                                                              |
+|--------------|----------------------|------------------------------------------------------------------------------------------|
+| GPIOC->MODER | bits[27:26] for PC13 | 00 = Input Mode.This is actually the reset default for most pins, but set it explicitly. |
+| GPIOC->PUPDR | bits[27:26] for PC13 | 01 = Pull-up enabled. Keeps the line HIGH when button is not pressed.                    |
+| GPIOC->IDR   | bit 13               | Input Data Register. Read this bit to know the current state of PC13.                    |
+|--------------|----------------------|------------------------------------------------------------------------------------------|
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* Forgetting the button is Active LOW - PC13 reads 0 when pressed, 1 when
+  released. The onboard button connects PC13 to GND when pressed. If we check
+  IDR & (1 << 13) without the !, our logic is inverted.
+
+* No debounce = multiple triggers per press, Mechanical buttons bounce
+  electrically for anywhere between 5–50ms on contact. Without the re-check
+  after a small delay, one physical press can register as 5–20 presses. Always
+  debounce.
+
+* Skipping the release wait, If we toggle on press but don't wait for release,
+  holding the button down will cause the LED to toggle rapidly on every loop
+  iteration. The while (!(IDR & (1 << 13))) blocks until the finger lifts.
+
+* Pull-up vs external resistor, The Nucleo board has an external pull-up on PC13
+  already, so the internal pull-up here is redundant but harmless. On custom
+  boards with a floating input pin and no pull-up, we will read garbage. Always
+  know the hardware.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* Why ODR ^= here but BSRR in Program 1; Toggle (^=) on ODR is genuinely the
+  cleanest way to flip a pin state without tracking it separately. It's a
+  trade-off: fine in polling main loop, but unsafe inside an ISR where a context
+  switch mid read-modify-write could corrupt state.
+
+* PC13 quirk on Nucleo boards, On some Nucleo variants, PC13 is also connected
+  to an RTC tamper/wakeup line. It works fine as GPIO input, but be aware if we
+  later enable RTC, there can be conflicts.
+
+* Polling is simple but burns CPU, This entire while(1) loop does nothing but
+  check a pin repeatedly. At 16MHz that's millions of wasted checks per
+  second. This is the motivation for EXTI interrupts, where the CPU is free to
+  do other things and only reacts when the pin actually changes.
+

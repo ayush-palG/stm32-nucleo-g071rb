@@ -14,7 +14,7 @@ Loop forever:
 PIN MAP
 =======
 
-PA5  =>  Onboard LED (LD2) - Active HIGH
+PA5  =>  Onboard LED (LD4) - Active HIGH
 
 --------------------------------------------------------------------------------
 
@@ -64,7 +64,7 @@ COMMON MISTAKES AND DEBUG TIPS
 
 --------------------------------------------------------------------------------
 
-Extra Notes
+EXTRA NOTES
 ===========
 
 * Why IOPORT_BASE is separate from PERIPH_BASE, On STM32G0, GPIO peripherals sit

@@ -1,0 +1,85 @@
+PSEUDOCODE
+==========
+
+Define blink intervals array: [100ms, 250ms, 500ms, 1000ms, 2000ms]
+Set current interval index to 0
+
+Initialize SysTick -> 1ms timebase
+Initialize PA5 as output (LED)
+Initialize PC13 as input with pull-up (Button)
+
+Track last_toggle time and last_blink state via ms_ticks
+
+Loop forever:
+
+    // Non-blocking LED toggle
+    If (ms_ticks - last_toggle) >= intervals[index]:
+        Toggle LED
+        Update last_toggle = ms_ticks
+
+    // Non-blocking button polling with debounce
+    If PC13 is LOW and button was previously released:
+        Wait 10ms (debounce via ms_ticks)
+        If PC13 still LOW:
+            Advance index -> (index + 1) % 5
+            Mark button as pressed
+	    Wait for releasing the button
+
+    If PC13 is HIGH:
+        Mark button as released
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA5   =>  Onboard LED (LD4)   - Active HIGH
+PC13  =>  Onboard User Button - Active LOW
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* Reading ms_ticks multiple times in one loop iteration, ms_ticks is volatile
+  and can change between reads since SysTick ISR fires every 1ms. If we read it
+  twice in the same logic block we may get two different values and get subtle
+  timing bugs. Snapshot it once at the top of the loop with
+  uint32_t now = ms_ticks and use now throughout.
+
+* Blocking while for release inside a non-blocking loop, This program is mostly
+  non-blocking, but keeps a short blocking wait for button release. This is a
+  pragmatic trade-off since button release is sub-second. After some program
+  onwards with EXTI, both press and release are fully interrupt-driven and the
+  main loop stays completely free.
+
+* Interval index out of bounds, Using % NUM_INTERVALS on the index ensures it
+  wraps from 4 back to 0 cleanly. If we hardcode % 5 and later change the array,
+  we introduce a mismatch. Tie it to the constant.
+
+* led_state tracking vs reading ODR, Rather than reading back ODR to know the
+  current LED state (which is a read-modify-write), we track state in a separate
+  variable. Cleaner and avoids the same atomicity concern as (ODR ^= ).
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* This is the core pattern for all future main loops. The if ((now - last_event)
+  >= interval) pattern is the foundation of cooperative bare-metal
+  scheduling. Every future program that needs to do multiple things
+  simultaneously: blink, read ADC, send UART, will stack these non-blocking `if
+  blocks` on top of each other in the same while(1). Understand this pattern
+  deeply here.
+
+* Why not use TIM2 here, TIM2 was freed intentionally. From next Program onwards
+  TIM2 is repurposed for PWM output, where it must run continuously in the
+  background. SysTick takes over all coarse millisecond timing from here
+  on. Each peripheral has a role and we try not to double-up.
+
+* Extending this pattern, we could add a second array for LED-on duty
+  (asymmetric blink - short flash vs long on) and a second index for it. Or add
+  a timeout that returns to default speed if no button press for 5
+  seconds. These are small additions on top of the same non-blocking skeleton.
+

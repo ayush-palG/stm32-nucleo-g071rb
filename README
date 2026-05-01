@@ -48,3 +48,8 @@ of the folders with their brief description:
 
 04. GENERAL PURPOSE TIMER DELAY: Used TIM2 in basic upcounting mode to generate
     accurate time delays. Understand PSC and ARR registers. 
+
+05. BUTTON-CONTROLLED BLINK RATE: Each button press increases the LED toggle
+    speed through preset intervals, cycling through them. We used non-blocking
+    patterns.
+    

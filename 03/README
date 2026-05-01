@@ -1,0 +1,94 @@
+PSEUDOCODE
+==========
+
+Configure SysTick:
+    Load RELOAD register with (SystemCoreClock / 1000 - 1) -> 1ms tick
+    Clear current value register
+    Enable SysTick with processor clock source
+    Enable SysTick interrupt
+
+Global ms_counter increments every SysTick interrupt (every 1ms)
+
+delay_ms(n):
+    Record current ms_counter value
+    Wait until ms_counter has advanced by n
+
+Main:
+    Setup PA5 as output (LED)
+    Loop forever:
+        Toggle LED
+        delay_ms(500)
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA5   =>  Onboard LED (LD4) - Active HIGH
+
+--------------------------------------------------------------------------------
+
+KEY REGISTERS
+=============
+
+SysTick (System Timer)
+`SysTick` lives in the ARM Cortex-M core itself, not STM32 peripherals.
+
+|-----------|-----------------|----------------------------------------------------------------------------------|
+| Register  | Field           | Description                                                                      |
+|-----------|-----------------|----------------------------------------------------------------------------------|
+| STK->CTRL | bit0  Enable    | Enables the SysTick counter                                                      |
+| STK->CTRL | bit1  TICKINT   | When set, triggers SysTick_Handler every time counter reaches 0                  |
+| STK->CTRL | bit2  CLKSOURCE | 1 = use processor clock (HCLK). 0 = use HCLK/8. We use 1                         |
+| STK->CTRL | bit16 COUNTFLAG | Reads 1 if counter hit 0 since last read. Cleared on read                        |
+| STK->LOAD | bits[23:0]      | Reload value. Counter counts down from this to 0, then reloads. Max 24-bit value |
+| STK->VAL  | bits[23:0]      | Current counter value. Writing any value clears it to 0                          |
+|-----------|-----------------|----------------------------------------------------------------------------------|
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* Off-by-one in LOAD value, The counter counts from LOAD down to 0, which is
+  LOAD + 1 clock cycles. So for exactly 1ms at 16MHz we need 15999, not
+  16000. The formula (SYSCLK / 1000) - 1 handles this correctly. Getting this
+  wrong makes every delay slightly off, which compounds over time.
+
+* ms_ticks must be volatile, the compiler sees that ms_ticks is never written
+  inside delay_ms() and will happily optimize the while loop into an infinite
+  loop or eliminate it entirely if volatile is missing. This is one of the most
+  classic bare-metal bugs.
+
+* Subtraction trick in delay_ms, Using (ms_ticks - start) < ms instead of
+  ms_ticks < (start + ms) correctly handles the case where ms_ticks wraps around
+  at 0xFFFFFFFF back to 0 (happens after ~49 days of uptime). The subtraction
+  version is rollover-safe.
+
+* SysTick LOAD is only 24-bit, Maximum reload value is 0xFFFFFF = 16,777,215. At
+  16MHz, that gives a max single tick period of about 1.048 seconds. We cannot
+  set a 2-second single tick. Use a counter (like ms_ticks) for longer
+  durations.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* SysTick is core, not vendor, Unlike TIM2 or USART2, SysTick is part of the ARM
+  Cortex-M0+ core specification. Its registers, behavior, and ISR name
+  (SysTick_Handler) are identical across all Cortex-M chips from all
+  vendors. This code would run on an STM32F4 with zero changes to the SysTick
+  part.
+
+* This becomes our system timebase, from now onwards, delay_ms() replaces the
+  crude loop counter. Every future program that needs time will build on top of
+  ms_ticks. And after some programs later, we'll use ms_ticks for non-blocking
+  timing patterns like if ((ms_ticks - last_toggle) >= interval) which lets the
+  CPU do multiple things at once without blocking in a while.
+
+* Polling inside delay_ms still blocks, The CPU sits inside the while loop doing
+  nothing useful. It's accurate, but not efficient. WWDG and Low Power Programs
+  will show later how to sleep the CPU during waits and wake only on the SysTick
+  interrupt, saving power significantly.
+

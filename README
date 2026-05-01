@@ -42,3 +42,6 @@ of the folders with their brief description:
 
 02. PUSH BUTTON POLLING: GPIO Input, Read the user button, debounce in software,
     toggle LED on press. Understand pull-up/down config.
+
+03. SYSTICK TIMER DELAY: Replace the crude loop delay with SysTick-based
+    millisecond delay.

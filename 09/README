@@ -1,0 +1,93 @@
+PSEUDOCODE
+==========
+
+Define two modes: BLINK_MODE, BREATHE_MODE
+Current mode = BLINK_MODE
+
+Initialize SysTick -> 1ms timebase
+Initialize PA5 as GPIO output (for blink mode)
+Initialize PC13 as input with pull-up (Button)
+Initialize EXTI on PC13 falling edge -> EXTI4_15 IRQ
+
+In EXTI ISR:
+    Clear FPR1 flag
+    Set mode_changed flag = 1
+    Toggle current_mode (BLINK <-> BREATHE)
+
+In main loop:
+
+    If mode_changed flag is set:
+        Clear mode_changed flag
+        Debounce wait via ms_ticks (20ms)
+        If mode is now BREATHE:
+            Reconfigure PA5 as AF2 (TIM2_CH1)
+            Start PWM on TIM2
+        If mode is now BLINK:
+            Stop TIM2
+            Reconfigure PA5 as GPIO output
+            Set LED OFF cleanly
+
+    If BLINK_MODE:
+        Non-blocking toggle every 500ms via ms_ticks
+
+    If BREATHE_MODE:
+        Non-blocking duty ramp via ms_ticks
+        Update CCR1 each STEP_INTERVAL
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA5   ->  GPIO output (blink mode) / TIM2_CH1 AF2 (breathe mode)
+PC13  ->  Onboard User Button  - Active LOW, falling edge triggers EXTI
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* Switching MODER while TIM2 is still running. If we reconfigure PA5 back to
+  GPIO output without first stopping TIM2 (CR1 &= ~CEN) and disabling the
+  channel (CCER &= ~CC1E), the timer peripheral still drives the pin through the
+  alternate function path even after MODER is changed back. Always disable the
+  peripheral before reconfiguring the pin. pa5_set_gpio_output() handles this in
+  the correct order.
+
+* Acting on is_mode_changed directly inside the ISR. Switching pin modes,
+  stopping timers, and calling functions with loops inside an ISR is
+  dangerous. The ISR here only sets two flags and exits. All the heavy
+  transition work happens in the main loop where it is safe, interruptible, and
+  has access to ms_ticks for debouncing.
+
+* `now` snapshot going stale after debounce wait. After the blocking debounce
+  wait inside is_mode_changed handling, now holds an old value. That is why
+  `last` are reset using fresh ms_ticks reads after the transition, not
+  `now`. Otherwise the blink or breathe timer appears to fire immediately.
+
+* Breathe state not reset on mode switch. If we switch back to breathe mode
+  mid-cycle without resetting `duty` and is_ramp_up, the ramp resumes from
+  wherever it left off, sometimes at full brightness going downward, which looks
+  like a glitch. Always reset breathe state on each entry into breathe mode.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* The ISR-sets-flag, main-loop-acts pattern. This is the single most important
+  architectural pattern in bare-metal firmware. The ISR is a trip wire, it
+  detects the event, records it minimally, and gets out. The main loop is the
+  worker, it sees the flag, does the heavy lifting safely. From this program
+  onwards it is the default approach.
+
+* Dynamic pin reconfiguration. Switching a pin between GPIO and alternate
+  function at runtime is perfectly valid. Motor controllers switch between PWM
+  drive and GPIO brake. Communication peripherals switch between SPI and GPIO
+  for bit-banging fallback. The key rule is always: disable the peripheral
+  first, reconfigure the pin, then re-enable.
+
+* This program is the complexity ceiling for GPIO/TIM2. Everything from here
+  shifts focus to new peripherals: UART, ADC, DMA, RTC. The non-blocking loop
+  structure, ISR flag pattern, and mode-switching technique established here
+  carry forward unchanged into every remaining program.

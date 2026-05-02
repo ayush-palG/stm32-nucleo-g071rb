@@ -1,0 +1,147 @@
+PSEUDOCODE
+==========
+
+Enable clocks for GPIOA and TIM2
+Configure PA5 as Alternate Function (TIM2_CH1)
+Configure TIM2 in PWM mode 1 on Channel 1:
+    PSC  -> scale 16MHz to 1MHz (1 tick = 1µs)
+    ARR  -> 1000 - 1 (PWM period = 1ms -> 1kHz frequency)
+    CCR1 -> duty cycle value (0 to ARR)
+    Set PWM Mode 1, enable preload on CCR1
+    Enable channel output
+    Enable TIM2 counter
+
+Loop forever:
+    Set CCR1 = 250  -> 25% duty cycle  (dim)
+    wait 2 seconds
+    Set CCR1 = 500  -> 50% duty cycle  (medium)
+    wait 2 seconds
+    Set CCR1 = 950  -> 95% duty cycle  (bright)
+    wait 2 seconds
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA5   =>  TIM2_CH1 (Alternate Function 2) - PWM output to onboard LED
+
+--------------------------------------------------------------------------------
+
+KEY REGISTERS
+=============
+
+GPIOA (General-Purpose Input/Output Port A)
+|--------------|---------------------|--------------------------------------------------------------------------------------|
+| Register     | Field               | Description                                                                          |
+|--------------|---------------------|--------------------------------------------------------------------------------------|
+| GPIOA->MODER | bits[11:10] for PA5 | 10 = Alternate Function mode. Pin is now controlled by the peripheral, not ODR/BSRR. |
+| GPIOA->AFRL  | bits[23:20] for PA5 | Selects which alternate function. AF2 = 0010 = TIM2_CH1 on PA5.                      |
+|--------------|---------------------|--------------------------------------------------------------------------------------|
+
+TIM2 (General-Purpose Timer)
+|-------------|----------------|----------------------------------------------------------------------------------------------------------|
+| Register    | Field          | Description                                                                                              |
+|-------------|----------------|----------------------------------------------------------------------------------------------------------|
+| TIM2->CCMR1 | bits[6:4] OC1M | Output Compare Mode for CH1. 110 = PWM Mode 1: output HIGH while CNT < CCR1, LOW otherwise.              |
+| TIM2->CCMR1 | bit3     OC1PE | Output Compare Preload Enable. CCR1 writes buffer until next update event. Prevents glitches mid-period. |
+| TIM2->CCR1  | bits[31:0]     | Capture/Compare Register 1. Holds the duty cycle threshold. CNT < CCR1 => pin HIGH.                      |
+| TIM2->CCER  | bit0      CC1E | Capture/Compare 1 Output Enable. Actually connects the PWM signal to the pin.                            |
+| TIM2->CR1   | bit7      ARPE | Auto-Reload Preload Enable. Buffers ARR writes. Set this when changing frequency on the fly.             |
+|-------------|----------------|----------------------------------------------------------------------------------------------------------|
+
+--------------------------------------------------------------------------------
+
+KEY CONCEPTS
+============
+
+What is PWM?
+PWM (Pulse Width Modulation) is a technique where we rapidly switch a digital
+output ON and OFF at a fixed frequency, but vary how long it stays ON vs
+OFF. Even though the signal is always either 0V or 3.3V, the average voltage
+perceived by a load (motor, LED, etc.) depends on that ratio.
+
+ HIGH     ____      ____      ____
+         |    |    |    |    |    |
+ LOW   __|    |____|    |____|    |____     50% duty -> avg 1.65V
+
+
+ HIGH     ______    ______    ______
+         |      |  |      |  |      |
+ LOW   __|      |__|      |__|      |__     75% duty -> avg 2.47V
+
+PWM on STM32 is generated entirely by a hardware timer, our CPU doesn't toggle
+the pin manually. The timer has an internal counter register (CNT) that counts
+up (or down) on every tick of a clock.
+
+Capture/Compare Register(CCR) is the heart of PWM. Each timer channel has its
+own CCR. The timer hardware continuously compares the running CNT value against
+CCR. So, CCR directly controls how long the signal stays high within each period
+(this is the duty cycle). To change duty cycle at runtime, we just write a new
+value to CCR.
+
+Let's go through an example to better understand:
+ARR = 999
+PSC = 15
+CCR = 300 (30% duty)
+
+One Cycle of PWM (CNT goes from 0 to 999)
+The first 300 ticks, the pin-state is HIGH and the rest of the 700 ticks, the
+pin-state is LOW. Signal goes HIGH and LOW only once per cycle.
+
+The PWM Frequency is 1kHz. It means that 1000 such cycles happen per second. So
+this HIGH-LOW pattern repeats 1000 times every second.
+
+Our load (LED) sees this pin voltage over time.
+ HIGH     __       __       __
+         |  |     |  |     |  |
+ LOW   __|  |_____|  |_____|  |_____     30% duty -> avg 0.99V
+
+The Load physically cannot react fast enough to the individual ON/OFF switching
+at 1kHz. So, it sees a steady ~0.99V effectively.
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* Forgetting to set AFRL. Setting MODER = 10 (AF mode) without configuring AFRL
+  leaves the pin connected to AF0 by default, which is usually nothing or
+  SWD. The LED will not respond at all. Always set both MODER and AFRL together.
+
+* CCR1 > ARR gives 100% but check our intent. If CCR1 >= ARR, the output stays
+  permanently HIGH (100% duty). If CCR1 = 0, output stays permanently LOW (0%
+  duty). Neither is wrong, but know the boundary behavior. pwm_set_duty() clamps
+  at PWM_ARR for safety.
+
+* OC1PE not set. CCR1 updates cause glitches, without preload enabled on CCR1,
+  writing a new duty cycle takes effect immediately mid-period, which can
+  produce a runt pulse. With OC1PE = 1, the new value loads cleanly at the next
+  update event (start of next period).
+
+* PA5 still in output mode from a previous program. If we're flashing over
+  Program 1(LED Blinking) without a full reset, MODER might still be 01
+  (output). Always clear MODER bits before setting the new mode, which the code
+  does explicitly.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* PWM frequency vs resolution trade-off. Here we use PSC=15 (1MHz clock) and
+  ARR=999 (1kHz PWM). This gives 1000 steps of duty cycle resolution (0–999). If
+  we increase frequency to 10kHz (ARR=99), we only get 100 steps of
+  resolution. If we decrease to 100Hz (ARR=9999), we get 10000 steps but visible
+  flicker on some LEDs. Choose based on what matters for the application.
+
+* TIM2 now runs freely in the background, Unlike Program 4 where TIM2 was
+  started and stopped for each delay, here it runs continuously and the hardware
+  PWM signal is generated entirely without CPU involvement. The CPU only touches
+  CCR1 to change duty, the waveform itself is hardware-generated. This is the
+  power of output compare mode.
+
+* This is the foundation for next Program (Breathing LED). The breathing effect
+  is simply calling pwm_set_duty() with a value that smoothly ramps up and down
+  over time using the SysTick timebase. The PWM infrastructure built here stays
+  identical, only the value fed into CCR1 changes.

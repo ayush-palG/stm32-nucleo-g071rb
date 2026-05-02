@@ -53,3 +53,5 @@ of the folders with their brief description:
     speed through preset intervals, cycling through them. We used non-blocking
     patterns.
     
+06. PWM OUTPUT: Used the TIM2 Channel, configure TIM2 in PWM mode on the LED
+    pin. Manually control duty cycle to dim/brighten the LED.

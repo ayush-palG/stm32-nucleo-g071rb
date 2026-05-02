@@ -55,3 +55,6 @@ of the folders with their brief description:
     
 06. PWM OUTPUT: Used the TIM2 Channel, configure TIM2 in PWM mode on the LED
     pin. Manually control duty cycle to dim/brighten the LED.
+
+07. BREATHING LED: (PWM + SysTick) Smoothly ramp duty cycle up and down using a
+    sine or linear sweep, creating a breathing effect.

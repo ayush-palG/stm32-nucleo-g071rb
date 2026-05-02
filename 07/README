@@ -1,0 +1,86 @@
+PSEUDOCODE
+==========
+
+Initialize SysTick -> 1ms timebase
+Initialize TIM2 PWM on PA5 (from Program 6)
+
+Define MAX_DUTY = 999
+Define STEP_INTERVAL = 5ms (how often duty cycle updates)
+Define STEP_SIZE = 5 (how much duty changes per step)
+
+direction = UP
+duty = 0
+
+Loop forever:
+    If (ms_ticks - last_step) >= STEP_INTERVAL:
+        Update last_step = ms_ticks
+
+        If direction is UP:
+            duty += STEP_SIZE
+            If duty >= MAX_DUTY:
+                duty = MAX_DUTY
+                direction = DOWN
+
+        If direction is DOWN:
+            duty -= STEP_SIZE (careful: duty is unsigned)
+            If duty <= 0 or wrapped:
+                duty = 0
+                direction = UP
+
+        pwm_set_duty(duty)
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA5   =>  TIM2_CH1 (AF2) - PWM breathing output to onboard LED
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* Unsigned underflow on the way down, duty is uint32_t. If duty = 5 and
+  STEP_SIZE = 10, then duty -= STEP_SIZE wraps around to 0xFFFFFFF5, a huge
+  number, and pwm_set_duty clamps it to PWM_ARR, snapping the LED to full
+  brightness instead of off. Always guard with if (duty <= STEP_SIZE) before
+  subtracting, as done above.
+
+* Too large a STEP_SIZE or too small a STEP_INTERVAL. If the ramp is too coarse
+  or too fast, the breathing looks like a sudden flash rather than a smooth
+  fade. At STEP_SIZE=10 and STEP_INTERVAL=2ms, one full ramp (0->999) takes
+  (999/10) * 2ms ≈ 200ms. A full breath cycle (up + down) is ~400ms. Tune these
+  two constants to taste.
+
+* Calling delay_ms() inside the breathing loop. A common instinct is to add
+  delay_ms(2) after each duty update instead of using the non-blocking
+  pattern. This works but blocks the CPU entirely, making it impossible to read
+  a button or handle an interrupt cleanly during the ramp. The non-blocking
+  approach here keeps the door open for Program 9 where a button press must
+  switch modes mid-breath.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* Linear ramp vs perceived brightness. Human eyes perceive brightness
+  logarithmically, not linearly. A linear ramp from 0->999 looks like it jumps
+  quickly at low brightness and slows at high brightness. A proper perceptual
+  ramp would use a lookup table of gamma-corrected values (e.g., gamma =
+  2.2). For an LED demo this is fine, but for a real product we would replace
+  the linear step with a precomputed table of ~20–30 values that feel visually
+  smooth.
+
+* Breathing speed as a status indicator. In real firmware, breathing rate often
+  encodes device state. Slow breath (2s cycle) = idle. Fast breath (200ms cycle)
+  = busy or pairing mode. We can expose STEP_INTERVAL_MS and STEP_SIZE as
+  runtime variables and change them from a UART command (Program 11) to switch
+  breathing speed without reflashing.
+
+* This program concludes the PWM arc. Programs 6 and 7 together cover PWM
+  fundamentals: hardware waveform generation, duty control, and smooth
+  software-driven modulation. Program 9 builds directly on this by switching
+  between blink mode and breathing mode on a button interrupt, which is where
+  EXTI finally enters the picture.

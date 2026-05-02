@@ -58,3 +58,6 @@ of the folders with their brief description:
 
 07. BREATHING LED: (PWM + SysTick) Smoothly ramp duty cycle up and down using a
     sine or linear sweep, creating a breathing effect.
+
+08. EXTI - EXTERNAL INTERRUPT ON BUTTON: Wire the user button to EXTI line. On
+    interrupt, toggle a flag. Understand NVIC, priority, and pending flags.

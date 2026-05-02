@@ -1,0 +1,169 @@
+PSEUDOCODE
+==========
+
+Configure PA5 as output (LED)
+Configure PC13 as input with pull-up (Button)
+
+Configure EXTI:
+    Route PC13 to EXTI line 13 via EXTICR
+    Set falling edge trigger (button press = HIGH to LOW)
+    Unmask EXTI line 13
+    Enable EXTI4_15 IRQ in NVIC
+
+Loop forever:
+    Do nothing (WFI optional - sleep until interrupt)
+
+EXTI4_15_IRQHandler:
+    Check pending flag for line 13
+    Clear pending flag immediately
+    Small software debounce delay
+    Toggle LED state via flag
+    Drive LED via BSRR
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA5   ->  Onboard LED (LD4)    - Active HIGH
+PC13  ->  Onboard User Button  - Active LOW, falling edge triggers EXTI
+
+--------------------------------------------------------------------------------
+
+KEY REGISTERS
+=============
+
+EXTI (External Interrupt)
+|-------------|--------|--------------------------------------------------------------------------------------|
+| Register    | Field  | Description                                                                          |
+|-------------|--------|--------------------------------------------------------------------------------------|
+| EXTI->RTSR1 | bit 13 | Rising edge trigger enable for line 13. We leave this clear                          |
+| EXTI->FTSR1 | bit 13 | Falling edge trigger enable for line 13. Set this - button press pulls line LOW      |
+| EXTI->IMR1  | bit 13 | Interrupt Mask Register. Must be set to unmask (enable) line 13 interrupt            |
+| EXTI->RPR1  | bit 13 | Rising edge Pending flag (G0-specific, replaces old PR register). Clear by writing 1 |
+| EXTI->FPR1  | bit 13 | Falling edge Pending flag (G0-specific). Clear by writing 1 to acknowledge interrupt |
+|-------------|--------|--------------------------------------------------------------------------------------|
+
+SYSCFG / EXTICR
+|---------------|-----------------------|---------------------------------------------------------------------------------------------------------|
+| Register      | Field                 | Description                                                                                             |
+|---------------|-----------------------|---------------------------------------------------------------------------------------------------------|
+| EXTI->EXTICR4 | bits[15:8] for EXTI13 | Selects which GPIO port drives EXTI line 13. 0x02 = Port C. On G0, EXTICR lives inside EXTI, not SYSCFG |
+|---------------|-----------------------|---------------------------------------------------------------------------------------------------------|
+
+NVIC (Nested Vectored Interrupt Controller)
+NVIC lives in ARM core. ISER (Interrupt Set Enable Register)
+|------------|------------------|--------------------------------------------------------------------------------------------------|
+| Register   | Field            | Description                                                                                      |
+|------------|------------------|--------------------------------------------------------------------------------------------------|
+| NVIC->ISER | bit for EXTI4_15 | Writing 1 to the correct bit enables the IRQ in the NVIC. EXTI4_15 is IRQ number 7 on STM32G071. |
+|------------|------------------|--------------------------------------------------------------------------------------------------|
+
+--------------------------------------------------------------------------------
+
+KEY CONCEPTS
+============
+
+What is EXTI?
+EXTI stands for External Interrupt/Event Controller. Its job is to watch GPIO
+pins and detect electrical signal changes. A GPIO pin is just a wire. It carries
+either a HIGH (3.3V) or LOW (0V) signal. EXTI watches that wire.
+
+There are three types of changes it can detect:
+* Rising Edge  - signal goes from LOW  -> HIGH
+* Falling Edge - signal goes from HIGH -> LOW
+* Both edges   - any change
+
+When a physical event happens on a GPIO pin (like a button press), the CPU
+doesn't see it directly. There is a pipeline it goes through:
+Physical Pin -> EXTI -> NVIC -> CPU
+
+Why Falling Edge for a button?
+When the button is not pressed, PC13 sits at HIGH (3.3V) because of the internal
+pull-up resistor we enabled. When we press the button, PC13 gets pulled to GND
+(LOW). So the signal transition is:
+Not pressed -> Pressed = HIGH -> LOW = Falling Edge
+
+When EXTI detects the configured edge on a line, it raises a pending flag for
+that line. Think of it as EXTI putting up its hand and saying "hey, something
+happened on line 13!". Since we configured a falling edge, when the button is
+pressed, bit 13 of FPR1 gets set to 1.
+
+Even after EXTI detects an edge and sets the pending flag, it won't signal
+anything further unless we unmask that line. Think of it like a Gate.
+
+Every peripheral that can generate an interrupt is assigned an IRQ number
+(Interrupt ReQuest number). This is ST's assignment, defined in the device
+datasheet. The EXTI lines 4-15 all share IRQ7. This is why inside the ISR we
+must check FPR1 manually to know which specific line fired, the NVIC only tells
+the CPU "something in lines 4–15 happened", not which exact line.
+
+On Cortex-M0+, ISER is a single 32-bit register covering all 32 IRQs, one bit
+each. Writing a 1 enables it.
+
+Full Flow - Here is what happens the moment we press the button (B1):
+1. PC13 goes HIGH -> LOW  (falling edge)
+2. EXTI Line 13 detects it (because EXTICR4 routes PC13 -> Line 13)
+3. EXTI sets bit 13 in FPR1  (pending flag raised)
+4. EXTI checks IMR1 bit 13 -> it's 1 (unmasked), so signal goes to NVIC
+5. NVIC sees IRQ7 is active and enabled in ISER
+6. NVIC interrupts the CPU, CPU looks up vector table slot for IRQ7
+7. CPU jumps to EXTI4_15_IRQHandler()
+8. Inside ISR:
+   - we check FPR1 bit 13 to confirm it was line 13
+   - we clear FPR1 bit 13 (write 1)
+   - we toggle the LED
+9. ISR returns, CPU resumes whatever it was doing (WFI sleep in our case)
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* Not clearing the pending flag, infinite ISR re-entry. If we enter the ISR and
+  do not clear FPR1, the hardware sees the flag still set and immediately
+  re-enters the ISR the moment it exits. The CPU gets stuck in an infinite ISR
+  loop. Always clear the flag as the very first action inside the handler.
+
+* G0 has RPR1/FPR1, not the old PR register. On STM32F4, the pending register is
+  EXTI->PR. On STM32G0 it is split into two: RPR1 for rising edge and FPR1 for
+  falling edge. If we copy code from an F4 example and use EXTI->PR, the address
+  lands on SWIER1 and corrupt our interrupt config silently.
+
+* EXTICR lives inside EXTI on G0, not SYSCFG. On most other STM32 families, the
+  GPIO-to-EXTI mux is inside SYSCFG registers and requires enabling the SYSCFG
+  clock via RCC->APBENR2. On G0 the EXTICR registers are part of the EXTI
+  peripheral itself, no SYSCFG clock needed. This trips up anyone coming from F4
+  examples.
+
+* Debouncing inside an ISR is controversial. A blocking loop inside an ISR holds
+  the CPU there and blocks all equal or lower priority interrupts. It works at
+  this stage because we have only one interrupt. From Program 9 onwards the
+  cleaner pattern is: set a flag in the ISR, debounce and act in the main loop.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* EXTI lines 4–15 share one IRQ on G0. On STM32G071, EXTI lines 4 through 15 all
+  funnel into a single IRQ handler EXTI4_15_IRQHandler. If we have multiple pins
+  on lines 4–15 triggering interrupts, we must check FPR1 or RPR1 inside the
+  handler to figure out which line fired. Never assume, always check the flag.
+
+* `__asm volatile ("wfi")` Wait For Interrupt puts the Cortex-M0+ into sleep
+  mode. The CPU halts, clock gates partially, and power drops noticeably. It
+  wakes the instant any enabled interrupt fires, in this case EXTI. Here it just
+  keeps the main loop clean and saves a little power for free.
+
+* IRQ priority on Cortex-M0+, M0+ supports only 4 priority levels (2
+  bits). Priority is set via NVIC->IPR registers, 4 IRQs packed per 32-bit
+  register, priority in the upper 2 bits of each byte. We leave priority at
+  default (0 = highest) here. When multiple interrupts coexist in later
+  programs, priority assignment becomes important.
+
+* This program is the gateway, Every program from here on uses EXTI, NVIC, or
+  both. The ISR structure, pending flag handling, and NVIC enable pattern
+  established here are the same pattern we will use for TIM2 overflow
+  interrupts, UART RX interrupts, DMA transfer-complete interrupts, and RTC
+  alarm interrupts. The shape of the handler changes, the mechanism does not.

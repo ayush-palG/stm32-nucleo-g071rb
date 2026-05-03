@@ -67,3 +67,6 @@ of the folders with their brief description:
 
 10. UART TRANSMIT - POLLING: Configure USART2, send strings and formatted data
     over serial. See output on a terminal (minicom/PuTTY).
+
+11. UART RECEIVE - (POLLING + ECHO): Receive a character, echo it back, and act
+    on it (e.g., 'b' = blink, 'p' = PWM). Simple command interface.

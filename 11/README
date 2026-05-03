@@ -1,0 +1,110 @@
+PSEUDOCODE
+==========
+
+Initialize USART2 TX + RX on PA2, PA3 (AF1)
+Initialize SysTick
+
+Send welcome message over UART
+
+Loop forever:
+    Poll RXNE flag on USART2->ISR
+    If RXNE set:
+        Read byte from RDR
+        Echo byte back
+        Match byte against command table:
+            'b' -> switch to BLINK mode   -> send "Mode: Blink\r\n"
+            'p' -> switch to BREATHE mode -> send "Mode: Breathe\r\n"
+            'f' -> blink faster           -> send "Faster\r\n"
+            's' -> blink slower           -> send "Slower\r\n"
+            '?' -> send help string
+            any other -> send "Unknown command\r\n"
+
+    If BLINK mode:
+        Non-blocking LED toggle at current blink_interval
+
+    If BREATHE mode:
+        Non-blocking duty ramp on TIM2 CCR1
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA2  ->  USART2_TX (AF1) - transmit to terminal
+PA3  ->  USART2_RX (AF1) - receive from terminal
+PA5  ->  LED output / TIM2_CH1 AF2 depending on mode
+PC13 ->  Not used this program (commands come via UART instead)
+
+--------------------------------------------------------------------------------
+
+KEY REGISTERS
+=============
+
+USART2 (Universal Synchronous/Asynchronous Receiver/Transmitter)
+|-------------|------------|---------------------------------------------------------------------------------------------------|
+| Register    | Field      | Description                                                                                       |
+|-------------|------------|---------------------------------------------------------------------------------------------------|
+| USART2->CR1 | bit2 RE    | Receiver Enable. Enables the RX path. Set alongside TE before UE.                                 |
+| USART2->ISR | bit5 RXNE  | RX Not Empty. Set by hardware when a byte has been received into RDR and is ready to read.        |
+| USART2->ISR | bit3 ORE   | Overrun Error. Set if a new byte arrives before RDR was read. Must be cleared or receiver stalls. |
+| USART2->RDR | bits[8:0]  | Receive Data Register. Read this to get the received byte. Reading clears RXNE automatically.     |
+| USART2->ICR | bit3 ORECF | Overrun Error Clear Flag. Write 1 to clear ORE in ISR.                                            |
+|-------------|------------|---------------------------------------------------------------------------------------------------|
+
+GPIOA (General-Purpose Input/Output Port A)
+|-------------|---------------------|------------------------------------|
+| Register    | Field               | Description                        |
+|-------------|---------------------|------------------------------------|
+| GPIOA->AFRL | bits[15:12] for PA3 | AF1 = 0b0001 for USART2_RX on PA3. |
+|-------------|---------------------|------------------------------------|
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* Overrun error stalls the receiver permanently. If our main loop spends too
+  long doing something and two bytes arrive back-to-back before RDR is read, ORE
+  sets. With ORE set, RXNE never sets again and the receiver appears
+  dead. Always check and clear ORE before checking RXNE, as
+  `usart2_receive_byte()` does here. This is the single most common UART polling
+  bug.
+
+* PA3 MODER must be set to AF. A common oversight is configuring TX (PA2)
+  correctly but leaving PA3 in the default analog mode. The receiver works
+  electrically but the signal never reaches the USART peripheral. Both pins need
+  MODER = 10 and the correct AFRL entry.
+
+* Reading RDR twice. RXNE clears the moment we read RDR. If we read RDR a second
+  time before the next byte arrives, we get 0x00 or stale data. Read it exactly
+  once per RXNE event.
+
+* Terminal local echo vs firmware echo. Most terminals have a local echo
+  setting. If both the terminal and the firmware echo the character, we see
+  every keystroke doubled. Disable local echo in the terminal
+  (in minicom: Ctrl-A E to toggle) and rely on the firmware echo instead.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* Polling RXNE is fine at low data rates. At 115200 baud, one byte arrives every
+  ~87µs. As long as our main loop iteration is well under 87µs, polling catches
+  every byte. The moment we add delay_ms() calls or heavier processing inside
+  the loop, we risk overruns. That is the motivation for interrupt-driven RX in
+  Program 13, where the ISR catches the byte the instant it arrives regardless
+  of what the main loop is doing.
+
+* The command table pattern scales well. The switch/case chain here is simple
+  and readable for a small command set. For a larger command set (10+ commands),
+  a table of {char cmd, void(*handler)(void)} function pointers is cleaner and
+  avoids a growing chain. That pattern is worth knowing but the swithc/case
+  version is perfectly adequate for embedded debug interfaces. The if/else-if
+  version is also a good alternative in this case.
+
+* This program is the interactive companion to everything that follows. From
+  here, instead of waiting for an LED to blink to verify behavior, we can send a
+  character and get a response over UART. Programs 14 onwards (ADC, DMA, RTC)
+  will stream real data back through this same UART interface, turning the
+  terminal into a live instrument readout.

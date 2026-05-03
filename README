@@ -64,3 +64,6 @@ of the folders with their brief description:
 
 09. EXTI TOGGLE - LED BLINK VS PWM MODE: Each button press (via EXTI) switches
     the LED between free-running blink mode and PWM breathing mode.
+
+10. UART TRANSMIT - POLLING: Configure USART2, send strings and formatted data
+    over serial. See output on a terminal (minicom/PuTTY).

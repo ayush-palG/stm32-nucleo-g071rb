@@ -1,0 +1,157 @@
+PSEUDOCODE
+==========
+
+Enable clocks for GPIOA and USART2
+Configure PA2 as AF1 (USART2_TX)
+Configure USART2:
+    BRR  -> set baud rate to 115200 from 16MHz HSI
+    Enable TX
+    Enable USART2
+
+Loop forever:
+    Send string "Hello, World!\r\n" over UART
+    Wait for each byte's TXE flag before sending next
+    Wait for TC flag after last byte (transmission complete)
+    delay_ms(1000)
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA2  ->  USART2_TX (AF1) - connect to ST-Link Virtual COM Port (VCP)
+PA3  ->  USART2_RX (AF1) - not used in TX-only program, but noted
+
+On the Nucleo-G071RB, PA2/PA3 are internally wired to the ST-Link USB
+bridge. Plug in USB and open a terminal at 115200 8N1 - no external wiring
+needed. Here 8N1 refers to 8-data-bits, No parity, 1-stop bit.
+
+--------------------------------------------------------------------------------
+
+KEY REGISTERS
+=============
+
+USART2 (Universal Synchronous/Asynchronous Receiver/Transmitter)
+|-------------|------------|-----------------------------------------------------------------------------------------|
+| Register    | Field      | Description                                                                             |
+|-------------|------------|-----------------------------------------------------------------------------------------|
+| USART2->BRR | bits[15:0] | Baud Rate Register. Value = USART_CLK / BAUD. At 16MHz, 115200 baud -> BRR = 139        |
+| USART2->CR1 | bit0 UE    | USART Enable. Must be set last, after all config is done                                |
+| USART2->CR1 | bit3 TE    | Transmitter Enable. Enables TX path and sends idle frame on the line                    |
+| USART2->TDR | bits[8:0]  | Transmit Data Register. Write byte here to send. Triggers transmission                  |
+| USART2->ISR | bit 7 TXE  | TX Empty flag. Set when TDR is ready to accept the next byte. Poll before each write    |
+| USART2->ISR | bit 6 TC   | Transmission Complete flag. Set when last byte fully shifted out. Poll after final byte |
+|-------------|------------|-----------------------------------------------------------------------------------------|
+
+RCC (Reset and Clock Control)
+|--------------|---------------|-------------------------------------------------------|
+| Register     | Field         | Description                                           |
+|--------------|---------------|-------------------------------------------------------|
+| RCC->APBENR1 | bit 17 USART2 | Enables USART2 peripheral clock. USART2 sits on APB1. |
+|--------------|---------------|-------------------------------------------------------|
+
+--------------------------------------------------------------------------------
+
+KEY CONCEPTS
+============
+
+What is USART doing electrically?
+At its core, UART/USART is taking a parallel byte sitting in the CPU's memory
+and converting it into a serial stream of bits on a single wire, one bit at a
+time. The receiver does the reverse.
+
+What is Baud Rate?
+Baud rate = number of symbol changes per second on the wire. In UART each symbol
+is one bit, so baud rate = bits per second (bps).
+* 9600 baud   => 9600 bits per second -> one bit lasts ~104 µs
+* 115200 baud => one bit lasts ~8.68 µs
+
+Both sender and receiver must agree on this rate beforehand, there's no clock
+wire to negotiate it automatically.
+
+The UART Frame - What's actually on the wire?
+
+Idle  Start  D0   D1   D2   D3   D4   D5   D6   D7   Stop  Idle
+HIGH   LOW   b0   b1   b2   b3   b4   b5   b6   b7   HIGH  HIGH
+ ‾‾‾‾|_____|____|____|____|____|____|____|____|____|‾‾‾‾‾|‾‾‾‾‾
+
+The start bit is the synchronization mechanism in async UART. The receiver
+detects the falling edge (HIGH->LOW), then starts its internal timer and samples
+every bit period from that moment.
+
+The Shift Register
+The STM32 USART transmitter has two separate hardware registers:
+* TRANSMIT DATA REGISTER - TDR
+* SHIFT REGISTER
+
+We write to the `TRANSMIT DATA REGISTER` which is automatically copied to a
+another register `SHIFT REGISTER` when it is empty. The `SHIFT REGISTER` is
+actively shifting bits onto TX pin bit-by-bit.
+
+Without the TDR, we'd have to wait until every single bit has shifted out before
+writing the next byte. With TDR, we can write the next byte into TDR while the
+previous byte is still shifting out. The moment the shift register finishes, it
+immediately pulls the next byte from TDR. This gives us a continuous
+back-to-back transmission with no idle gap between bytes.
+
+There is `SHIFT REGISTER` for RDR as well. The shift register collects bits from
+RX pin, assembles a full byte, then moves it to RDR and raises an interrupt flag
+(RXNE). We then read RDR.
+
+Critical danger: RDR is only 1 byte deep. If we don't read it before the next
+byte is fully assembled and tries to move in, we get an Overrun Error (ORE). The
+incoming byte is lost. This is why we need interrupts or DMA for reliable
+reception.
+
+The CPU and USART machine run in parallel. The CPU drops bytes into TDR and
+picks bytes up from RDR. The USART machine handles all the bit-timing,
+start/stop bits, oversampling, framing; completely in hardware, without any CPU
+cycles. The ISR flags are the USART machine's way of tapping the CPU on the
+shoulder and saying "hey, I need attention."
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* BRR rounding error accumulates => 16000000 / 115200 = 138.88. Truncating to
+  138 gives a baud rate of 115942 -> 0.64% fast. Rounding to 139 gives
+  115107 -> 0.08% slow. UART tolerates up to ~2% error, but rounding is always
+  more accurate than truncating. Since we have no hardware divider, the division
+  is done once at compile time as a constant, no runtime cost.
+
+* Enabling UE before TE. If we set UE before TE, the transmitter may not
+  initialize correctly and the first byte can be corrupted or lost. Always
+  configure CR1 fields first, set TE, then set UE last. The code sets them in
+  separate |= writes to make the order explicit.
+
+* Not waiting for TC after last byte, TXE goes high as soon as TDR is copied to
+  the shift register, the byte is still being clocked out. If we power down,
+  sleep, or disable USART right after seeing TXE, the last byte is truncated. TC
+  means the shift register is fully empty and the line is idle. Always wait for
+  TC at the end of a transmission.
+
+* Garbled output on terminal. Almost always a baud rate mismatch. Double check
+  that terminal is set to 115200, 8 data bits, no parity, 1 stop bit (8N1). Also
+  verify PA2 maps to the ST-Link VCP on our specific Nucleo revision, some
+  boards use different pins.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* Why \r\n and not just \n? UART terminals (minicom, PuTTY, Tera Term) typically
+  expect \r\n (carriage return + line feed) for a new line. Sending only \n
+  causes a staircase effect where each line starts where the previous ended. \r
+  moves the cursor to column zero, \n moves it down one row.
+
+* PA2/PA3 and the ST-Link VCP. The Nucleo board has a built-in ST-Link debugger
+  chip that bridges USART2 (PA2/PA3) to a USB virtual COM port on our PC. This
+  means we get UART output over the same USB cable used for flashing, no
+  USB-to-UART adapter needed. This is one of the most convenient features of the
+  Nucleo board for development.
+
+* This is the debug backbone from here on. From Program 10 onwards,
+  usart2_send_string() and usart2_send_uint_hex() replace any need for a
+  debugger watch window for simple value inspection.

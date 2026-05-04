@@ -1,0 +1,115 @@
+PSEUDOCODE
+==========
+
+Initialize SysTick, USART2 TX+RX, PA5 LED
+Enable RXNE interrupt in USART2->CR1
+Enable USART2 IRQ in NVIC
+
+Implement a circular ring buffer (head, tail, buffer[N])
+
+In USART2 ISR:
+    If RXNE set:
+        Read byte from RDR -> clears RXNE
+        Write byte into ring buffer at head
+        Advance head
+    If ORE set:
+        Clear it via ICR
+
+In main loop:
+    If ring buffer not empty:
+        Read byte from tail
+        Advance tail
+        Process command (same table as Program 11)
+        Act on LED / send UART response
+
+    Non-blocking LED blink via ms_ticks
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA2  ->  USART2_TX (AF1)
+PA3  ->  USART2_RX (AF1)
+PA5  ->  LED (GPIO output)
+
+--------------------------------------------------------------------------------
+
+KEY REGISTERS
+=============
+
+USART2 (Universal Synchronous/Asynchronous Receiver/Transmitter)
+|-------------|---------------|---------------------------------------------------------------------------------|
+| Register    | Field         | Description                                                                     |
+|-------------|---------------|---------------------------------------------------------------------------------|
+| USART2->CR1 | bit5 RXNEIE   | RX Not Empty Interrupt Enable. When set, fires USART2 IRQ every time RXNE sets. |
+| USART2->CR1 | bit3 RXOVRDIE | Not used here - ORE handling done in ISR by checking ISR register directly.     |
+| USART2->ISR | bit5 RXNE     | Still the flag that triggers the interrupt. Reading RDR clears it.              |
+| USART2->ISR | bit3 ORE      | Overrun - checked inside ISR and cleared immediately via ICR.                   |
+| USART2->ICR | bit3 ORECF    | Write 1 to clear ORE.                                                           |
+|-------------|---------------|---------------------------------------------------------------------------------|
+
+NVIC (Nested Vectored Interrupt Controller)
+|------------|-------------------|-------------------------------------------------------------------------|
+| Register   | Field             | Description                                                             |
+|------------|-------------------|-------------------------------------------------------------------------|
+| NVIC->ISER | bit28 USART2_IRQn | USART2 is IRQ28 on STM32G071. Enable here to receive USART2 interrupts. |
+|------------|-------------------|-------------------------------------------------------------------------|
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* Power-of-2 buffer size enables maskless wrap -> (index + 1) & (SIZE - 1) is a
+  single AND instruction - no division, no branch, no libgcc. If we use a
+  non-power-of-2 size, we need a comparison and conditional reset, which is
+  slightly more code. Always use power-of-2 for ring buffers on bare-metal.
+
+* Head and tail are volatile but the buffer itself needs care. The head and tail
+  indices are volatile because the ISR writes head and main reads it. The buffer
+  array itself does not need volatile because access is always gated through the
+  index check. However the struct is declared volatile overall here - be aware
+  that this forces the compiler to re-read every element every time, which is
+  safe but slightly less optimal.
+
+* wfi and ring buffer, ordering matters. The sequence must always be: check
+  buffer -> process -> wfi. If we do wfi first, we may sleep through a byte that
+  arrived just before wfi executed but after the last buffer check. The
+  Cortex-M0+ guarantees that if an interrupt is pending when wfi executes, it
+  wakes immediately, so this ordering is safe as long as RXNEIE is enabled
+  before the loop.
+
+* ISR sending UART bytes - avoid it. It might be tempting to echo bytes directly
+  from the ISR. The problem: usart2_send_byte polls TXE in a loop, and if the
+  UART is busy, we spin inside the ISR blocking everything else. Always push to
+  a buffer in the ISR and transmit in the main loop.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* This is the correct production pattern for UART RX. Polling RXNE in the main
+  loop (Program 11) works only when the loop is fast enough. The
+  interrupt-driven ring buffer works regardless of how slow or busy the main
+  loop is, as long as the buffer does not overflow. The buffer size of 16 bytes
+  handles bursts of fast typing easily at 115200 baud.
+
+* The ring buffer is a universal bare-metal construct. The exact same RingBuffer
+  structure with head written by producer and tail read by consumer appears in
+  ADC streaming, DMA completion queuing, and any other ISR-to-main data
+  handoff. It is worth memorising this pattern cold.
+
+* Why wfi still makes sense here. Even with interrupt-driven RX, the main loop
+  has nothing to do between characters arriving. wfi saves power and reduces EMI
+  from unnecessary instruction fetches. The USART2 interrupt wakes the core the
+  instant a byte arrives, response latency is one interrupt entry cycle, not one
+  full loop iteration.
+
+* Two-state machine vs full command processor. The BLINK_STATE / MANUAL_STATE
+  state machine here is minimal. A production UART command processor would
+  typically have a third state for multi-character commands (e.g. SET 750\r\n to
+  set blink interval to 750ms), buffering characters until \r or \n, then
+  parsing the full line. That line-buffer pattern builds naturally on top of
+  this ring buffer foundation.

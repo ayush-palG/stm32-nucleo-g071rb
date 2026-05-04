@@ -73,3 +73,6 @@ of the folders with their brief description:
 
 12. BUTTON -> UART SEND -> (EXTI + UART): On button press (EXTI), transmit a
     random character and incrementing counter value of button-presses over UART.
+
+13. UART INTERRUPT-DRIVEN RX: Move UART receive to interrupt mode. No
+    polling. React to received bytes inside ISR or via a flag.

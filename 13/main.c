@@ -34,7 +34,7 @@ uint8_t rb_fetch(uint8_t *value)
 
     *value = rx_buffer.bytes[rx_buffer.tail++];
     rx_buffer.tail &= BUFFER_MASK;
-    
+
     rx_buffer.count--;
     return 1;
 }
@@ -189,12 +189,12 @@ void usart2_send_string(const char *str)
 void usart2_send_uint_hex(uint32_t value)
 {
     for (uint8_t i = 0; i < 8; ++i) {
-	uint8_t nibble = value >> (32 - 4*(i+1)) & 0xF;
-	if (nibble >= 10) {
-	    usart2_send_byte(nibble-10 + 'A');
-	} else {
-	    usart2_send_byte(nibble + '0');
-	}
+        uint8_t nibble = value >> (32 - 4*(i+1)) & 0xF;
+        if (nibble >= 10) {
+            usart2_send_byte(nibble-10 + 'A');
+        } else {
+            usart2_send_byte(nibble + '0');
+        }
     }
     while (!(USART2->ISR & (1U << 6)));
 }
@@ -203,15 +203,15 @@ void USART2_IRQHandler(void)
 {
     // Firstly, clear the Overrun, otherwise RXNE may not fire correctly
     if (USART2->ISR & (1U << 3)) {
-	USART2->ICR |= (1U << 3);
+        USART2->ICR |= (1U << 3);
     }
 
     // Byte Received
     if (USART2->ISR & (1U << 5)) {
-	if (!rb_insert(USART2->RDR)) {
-	    usart2_send_string("Ring Buffer is Full. Program is stopped."NEWLINE);
-	    while (1);
-	}
+        if (!rb_insert(USART2->RDR)) {
+            usart2_send_string("Ring Buffer is Full. Program is stopped."NEWLINE);
+            while (1);
+        }
     }
 }
 
@@ -247,79 +247,79 @@ int main(void)
     uint32_t last = 0;
 
     LED_STATE led_state = LED_BLINK_STATE;
-    
+
     usart2_send_string("UART IRQ-driven RX ready"NEWLINE);
     usart2_send_string("b=blink f=faster s=slower o=on x=off ?=help"NEWLINE);
     usart2_send_string("> ");
-    
+
     while (1) {
-	uint32_t now = ms_ticks;
+        uint32_t now = ms_ticks;
 
-	uint8_t cmd;
-	while (rb_fetch(&cmd)) {
-	    usart2_send_byte(cmd);
-	    usart2_send_string(NEWLINE);
+        uint8_t cmd;
+        while (rb_fetch(&cmd)) {
+            usart2_send_byte(cmd);
+            usart2_send_string(NEWLINE);
 
-	    switch (cmd) {
-	        case 'B':
-	        case 'b': {
-		    led_state = LED_BLINK_STATE;
-		    usart2_send_string("LED: Blink"NEWLINE);
-		} break;
-	    
-	        case 'F':
-	        case 'f': {
-		    blink_interval -= (blink_interval <= BLINK_STEP_SIZE) ? 0 : BLINK_STEP_SIZE;
-		    usart2_send_string("Blink Speed: ");
-		    usart2_send_uint_hex(blink_interval);
-		    usart2_send_string(NEWLINE);
-		} break;
-		
-	        case 'S':
-	        case 's': {
-		    blink_interval += (blink_interval >= BLINK_SPEED_LIMIT) ? 0 : BLINK_STEP_SIZE;
-		    usart2_send_string("Blink Speed: ");
-		    usart2_send_uint_hex(blink_interval);
-		    usart2_send_string(NEWLINE);
-		} break;
+            switch (cmd) {
+                case 'B':
+                case 'b': {
+                    led_state = LED_BLINK_STATE;
+                    usart2_send_string("LED: Blink"NEWLINE);
+                } break;
 
-	        case 'O':
-	        case 'o': {
-		    led_state = LED_MANUAL_STATE;
-		    is_led_on = 1;
-		    GPIOA->BSRR = (1U << 5);
-		    usart2_send_string("LED: On"NEWLINE);
-		} break;
-		    
-	        case 'X':
-	        case 'x': {
-		    led_state = LED_MANUAL_STATE;
-		    is_led_on = 0;
-		    GPIOA->BSRR = (1U << 21);
-		    usart2_send_string("LED: Off"NEWLINE);
-		} break;
+                case 'F':
+                case 'f': {
+                    blink_interval -= (blink_interval <= BLINK_STEP_SIZE) ? 0 : BLINK_STEP_SIZE;
+                    usart2_send_string("Blink Speed: ");
+                    usart2_send_uint_hex(blink_interval);
+                    usart2_send_string(NEWLINE);
+                } break;
 
-	        case '?': {
-		    usart2_send_string("b=blink f=faster s=slower o=on x=off"NEWLINE);
-		} break;
+                case 'S':
+                case 's': {
+                    blink_interval += (blink_interval >= BLINK_SPEED_LIMIT) ? 0 : BLINK_STEP_SIZE;
+                    usart2_send_string("Blink Speed: ");
+                    usart2_send_uint_hex(blink_interval);
+                    usart2_send_string(NEWLINE);
+                } break;
 
-	        default: {
-		    usart2_send_string("Unknown Command. Press `?` for help"NEWLINE);
-		}
-	    }
+                case 'O':
+                case 'o': {
+                    led_state = LED_MANUAL_STATE;
+                    is_led_on = 1;
+                    GPIOA->BSRR = (1U << 5);
+                    usart2_send_string("LED: On"NEWLINE);
+                } break;
 
-	    usart2_send_string("> ");
-	}
+                case 'X':
+                case 'x': {
+                    led_state = LED_MANUAL_STATE;
+                    is_led_on = 0;
+                    GPIOA->BSRR = (1U << 21);
+                    usart2_send_string("LED: Off"NEWLINE);
+                } break;
 
-	if (led_state == LED_BLINK_STATE) {
-	    if ((now - last) >= blink_interval) {
-		last = now;
-		is_led_on = !is_led_on;
-		GPIOA->BSRR = (is_led_on) ? (1U << 5) : (1U << 21);
-	    }
-	}
-	
-	__asm volatile ("wfi");
+                case '?': {
+                    usart2_send_string("b=blink f=faster s=slower o=on x=off"NEWLINE);
+                } break;
+
+                default: {
+                    usart2_send_string("Unknown Command. Press `?` for help"NEWLINE);
+                }
+            }
+
+            usart2_send_string("> ");
+        }
+
+        if (led_state == LED_BLINK_STATE) {
+            if ((now - last) >= blink_interval) {
+                last = now;
+                is_led_on = !is_led_on;
+                GPIOA->BSRR = (is_led_on) ? (1U << 5) : (1U << 21);
+            }
+        }
+
+        __asm volatile ("wfi");
     }
 
     return 0;

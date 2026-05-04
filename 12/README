@@ -1,0 +1,81 @@
+PSEUDOCODE
+==========
+
+Initialize SysTick, USART2 TX, PA5 LED, PC13 Button
+Initialize EXTI on PC13 falling edge
+
+Seed a simple LFSR with a non-zero value (random number generator)
+
+In EXTI ISR:
+    Clear FPR1
+    Set btn_flag = 1
+
+In main loop:
+
+    If btn_flag set:
+        Clear btn_flag
+        Debounce via ms_ticks
+        If button still held:
+            Generate next LFSR value
+            Extract printable ASCII character from it (range 33–126)
+            Send character + context string over UART
+            Toggle LED to give visual feedback
+        Wait for button release
+
+--------------------------------------------------------------------------------
+
+PIN MAP
+=======
+
+PA2   ->  USART2_TX (AF1)   - transmit to terminal
+PA5   ->  LED (GPIO output) - visual feedback on button press
+PC13  ->  User Button       - falling edge EXTI
+
+--------------------------------------------------------------------------------
+
+COMMON MISTAKES AND DEBUG TIPS
+==============================
+
+* LFSR state must never be zero. A Galois LFSR with state 0 produces 0 forever,
+  the feedback polynomial has nothing to work with. Always guard against zero
+  after any XOR operation that modifies the seed.
+
+* sw_div called twice for quotient and remainder separately. In
+  usart2_send_uint, the current code calls sw_div once for the remainder and
+  once for the quotient. Combine into one call by capturing both return value
+  and rem in a single pass, saves one full division loop per digit. Shown
+  correctly in lfsr_to_printable_ascii which uses a single call.
+
+* WFI with a pending flag, wfi sleeps until an interrupt fires. If button_flag
+  is set and we enter wfi before checking it, we sleep until the next interrupt,
+  potentially missing a fast double-press. The flag check comes before wfi in
+  the loop so this cannot happen here, but be aware of the ordering.
+
+* LFSR seed variation at boot is weak, XORing with ms_ticks after 5ms gives very
+  little entropy. Every boot produces nearly the same sequence. This is fine for
+  a character-sending demo but not for anything security-related. A proper
+  entropy source would be ADC noise sampled at startup.
+
+--------------------------------------------------------------------------------
+
+EXTRA NOTES
+===========
+
+* Galois vs Fibonacci LFSR. There are two common LFSR topologies. Fibonacci
+  shifts the register and XORs selected tap bits to produce the feedback
+  bit. Galois (used here) XORs the feedback into multiple internal positions on
+  the same clock, it is faster in software because it is a single XOR with a
+  constant mask versus multiple bit extractions. Both produce the same
+  maximal-length sequence for the same polynomial.
+
+* Why printable ASCII range 33–126. ASCII 0–31 are control characters (newline,
+  tab, bell, etc.) that would clutter or confuse a terminal. ASCII 32 is space,
+  technically printable but visually invisible. ASCII 33 (!) through 126 (~) are
+  all visible, typeable characters. 127 is DEL. So 33–126 gives 94 clean
+  printable characters, hence % 94 + 33.
+
+* This program validates the full EXTI->ISR->flag->main pipeline. Every program
+  from here that uses interrupts follows this exact shape: ISR sets flag, main
+  loop checks flag, acts, clears flag. Program 13 (UART RX interrupt) applies
+  the identical pattern to UART. The pipeline is always the same, only the
+  peripheral changes.

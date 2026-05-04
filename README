@@ -70,3 +70,6 @@ of the folders with their brief description:
 
 11. UART RECEIVE - (POLLING + ECHO): Receive a character, echo it back, and act
     on it (e.g., 'b' = blink, 'p' = PWM). Simple command interface.
+
+12. BUTTON -> UART SEND -> (EXTI + UART): On button press (EXTI), transmit a
+    random character and incrementing counter value of button-presses over UART.

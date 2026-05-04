@@ -9,10 +9,10 @@
 #define BUFFER_MASK  (BUFFER_SIZE - 1U)
 
 typedef struct {
-    uint8_t bytes[BUFFER_SIZE];
-    uint32_t head;    // Written by ISR
-    uint32_t tail;    // Read by main
-    uint32_t count;
+    volatile uint8_t bytes[BUFFER_SIZE];
+    volatile uint32_t head;    // Written by ISR
+    volatile uint32_t tail;    // Read by main
+    volatile uint32_t count;
 } RingBuffer;
 
 static volatile RingBuffer rx_buffer = {0};
